@@ -1,4 +1,4 @@
-# Salacia (Salzwächter)
+# ESPHome Project Template
 
 # ToDo
 - one

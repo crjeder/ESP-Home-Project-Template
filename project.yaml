@@ -1,30 +1,31 @@
 esphome:
-  name: rabbit-hutch
+  name: project-template
+  friendly_name: Project Template
+  # Automatically add the mac address to the name
+  # so you can use a single firmware for all devices
+  name_add_mac_suffix: true
 
 esp32:
-  board: esp32doit-devkit-v1
+  board: esp32dev
   framework:
-    type: arduino
+    type: esp-idf
 
-# Enable logging
+# To be able to get logs from the device via serial and api.
 logger:
 
-# Enable Home Assistant API
+# API is a requirement of the dashboard import.
 api:
-  password: "12345678"
 
-# ota:
-#  password: "12345678"
+# OTA is required for Over-the-Air updating
+ota:
+  - platform: esphome
 
 wifi:
-  ssid: "12345678"
-  password: "12345678"
-
-  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  # Set up a wifi access point using the device name above
   ap:
-    ssid: "Rabbit-Hutch Fallback Hotspot"
-    password: "12345678"
 
+# In combination with the `ap` this allows the user
+# to provision wifi credentials to the device.
 captive_portal:
     
 web_server:
@@ -37,224 +38,3 @@ text_sensor:
       name: "Sensor SSID"
   - platform: version
     name: "Sensor ESPHome Version"
-
-# state machine implementation
-external_components:
-  - source:
-      type: git
-      url: https://github.com/muxa/esphome-state-machine
-    
-number:
-  - platform: template
-    id: nr_inhabitants
-    initial_value: 4.0
-    min_value: 0.0
-    max_value: 4.0
-    step: 1.0
-    optimistic: true
-    on_value:
-      then:
-        - logger.log: value changed
-        - if:
-            condition: 
-              lambda: 'return (x > 4.0 || x < 0);'
-            then:
-              - state_machine.transition: ERROR
-         
-state_machine:
-  - name: Rabit hutch as state machine
-    id: hutch_state
-    states:
-      - "CLOSED"
-      - "OPEN"
-      - "WAITING"
-      - "ERROR"
-    inputs:
-      - name: MANUAL_OPEN
-        transitions:
-          - CLOSED -> OPEN
-        on_input: 
-          - cover.open: hutch_door
-          - logger.log: Manual open
-      - name: MANUAL_CLOSE
-        transitions:
-          - ERROR -> CLOSED
-          - OPEN -> CLOSED
-          - WAITING -> CLOSED
-        on_input: 
-          - number.set: 
-              id: nr_inhabitants 
-              value: 4.0
-          - cover.close: hutch_door
-          - logger.log: Manual close
-      - name: TIME_CLOSE
-        transitions:
-          - OPEN -> WAITING
-      - name: TIME_OPEN
-        transitions:
-          - CLOSED -> OPEN
-        on_input: 
-          - cover.open: hutch_door
-          - logger.log: Time open
-      - name: ENTER
-        transitions:
-          - from: OPEN
-            to: OPEN
-            on_transition: 
-              - number.increment:
-                  id: nr_inhabitants
-                  cycle: false
-          - from: WAITING 
-            to: WAITING
-            on_transition: 
-              - number.increment:
-                  id: nr_inhabitants
-                  cycle: false
-              - if:
-                  condition:
-                    lambda: 'return id(nr_inhabitants).state == 4.0;'
-                  then:
-                    - state_machine.transition: CLOSE
-      - name: CLOSE
-        transitions:
-          - WAITING -> CLOSED
-        on_input:
-          - number.set: 
-              id: nr_inhabitants 
-              value: 4.0
-          - cover.close: hutch_door
-          - logger.log: All in! Closing
-      - name: EXIT
-        transitions:
-          - OPEN -> OPEN
-          - WAITING -> WAITING
-        on_input: 
-          - number.decrement:
-              id: nr_inhabitants
-              cycle: false
-                
-switch:
-  - platform: gpio
-    name: "Hutch Door Open Switch"
-    id: door_open_switch
-    pin: 
-      number: GPIO16
-      mode:
-        input: true
-        pullup: true
-    on_turn_on:
-      - state_machine.transition: MANUAL_OPEN
-
-  - platform: gpio
-    name: "Hutch Door Close Switch"
-    id: door_close_switch
-    pin: 
-      number: GPIO17
-      mode:
-        input: true
-        pullup: true
-    on_turn_on:
-      - state_machine.transition: MANUAL_CLOSE
-
-output:
-  - platform: gpio
-    id: motor_close
-    pin: GPIO33 
-
-  - platform: gpio
-    id: motor_open
-    pin: GPIO32 
-
-cover:
-- platform: time_based
-  name: "Rabbit Hutch Door"
-  id: hutch_door
-  open_action:
-    - output.turn_on: motor_open 
-  open_duration: 10s
-  close_action: 
-    - output.turn_on: motor_close 
-  close_duration: 10s
-  stop_action:
-      - output.turn_off: motor_close
-      - output.turn_off: motor_open
-      - state_machine.transition: ERROR
-
-i2c:
-  sda: 21
-  scl: 22
-  scan: false
-  id: bus_a
-# frequency: 100kHz
-
-apds9960:
-  address: 0x39
-  update_interval: 60s
-  gesture_led_drive: 50mA
-
-
-binary_sensor:
-  - platform: apds9960     # Rabbit enters the hutch
-    direction: UP
-    name: "Rabbit has entered the hutch"
-    on_press:
-      - state_machine.transition: ENTER
-
-  - platform: apds9960
-    direction: DOWN         # Rabbit exits the hutch
-    name: "Rabbit has left the hutch"
-    on_press:
-      - state_machine.transition: EXIT
-
-time:
-  - platform: sntp
-    id: sntp_time
-    timezone: Europe/Berlin
-    servers:
-     - 0.pool.ntp.org
-     - 1.pool.ntp.org
-     - 2.pool.ntp.org
-    on_time:
-      # Every 30 minutes
-      - seconds: 0
-        minutes: /30
-        then:
-          - logger.log: check fence
-          - switch.toggle: my_switch
-sun:
-  latitude: 48.09009° 
-  longitude: 11.96109°
-
-  on_sunrise:
-    - elevation: 5°
-      then:
-        - logger.log: Good morning! I'll open the hutch door!
-        - state_machine.transition: TIME_OPEN
-
-  on_sunset:
-    - elevation: 5°
-      then:
-        - logger.log: Good evening! I'll close the hutch door!
-        - state_machine.transition: TIME_CLOSE
-    - elevation: 0°
-      then:
-        if:
-          condition:
-            state_machine.state: "Error"
-          then:
-            - logger.log: Danger! Hutch still in error state. Check immediately
-
-sensor:
-  - platform: pulse_meter
-    name: 'Fence pulse conuter'
-    id: fence
-    device_class: frequency
-    state_class: measurement
-    internal_filter: 20ms 
-    internal_filter_mode: EDGE
-    accuracy_decimals: 0
-    pin: GPIOXX
-    on_value_range:   # should be at least one pulse every 2 s : 30 pules per minute
-      - below: 30.0
-        then:
-          - logger.log: fence not working
